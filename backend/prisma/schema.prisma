@@ -1,0 +1,172 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  AGENT
+  CUSTOMER
+  ADMIN
+}
+
+enum SessionStatus {
+  WAITING
+  ACTIVE
+  ENDED
+}
+
+enum RecordingStatus {
+  IDLE
+  RECORDING
+  PROCESSING
+  READY
+}
+
+enum MessageType {
+  TEXT
+  FILE
+  SYSTEM
+}
+
+enum SessionEventType {
+  CREATED
+  JOINED
+  LEFT
+  ENDED
+  RECORDING_START
+  RECORDING_STOP
+  RECONNECTED
+  DISCONNECTED
+}
+
+model User {
+  id           String         @id @default(uuid())
+  email        String         @unique
+  passwordHash String
+  name         String
+  role         Role           @default(CUSTOMER)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  createdSessions  Session[]       @relation("SessionCreator")
+  participations   Participant[]
+  chatMessages     ChatMessage[]
+  recordings       Recording[]     @relation("RecordingStarter")
+  fileAttachments  FileAttachment[]
+  sessionEvents    SessionEvent[]
+
+  @@map("users")
+}
+
+model Session {
+  id          String        @id @default(uuid())
+  title       String
+  status      SessionStatus @default(WAITING)
+  createdById String
+  createdBy   User          @relation("SessionCreator", fields: [createdById], references: [id])
+  inviteToken String        @unique @default(uuid())
+  startedAt   DateTime?
+  endedAt     DateTime?
+  duration    Int?          @default(0)
+  createdAt   DateTime      @default(now())
+
+  participants    Participant[]
+  chatMessages    ChatMessage[]
+  recordings      Recording[]
+  fileAttachments FileAttachment[]
+  sessionEvents   SessionEvent[]
+
+  @@index([status])
+  @@index([createdById])
+  @@index([inviteToken])
+  @@map("sessions")
+}
+
+model Participant {
+  id          String   @id @default(uuid())
+  sessionId   String
+  session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  role        Role
+  joinedAt    DateTime @default(now())
+  leftAt      DateTime?
+  isConnected Boolean  @default(true)
+  mediaState  Json     @default("{\"camera\": false, \"microphone\": false, \"screenShare\": false}")
+
+  @@unique([sessionId, userId])
+  @@index([sessionId])
+  @@index([userId])
+  @@map("participants")
+}
+
+model ChatMessage {
+  id        String      @id @default(uuid())
+  sessionId String
+  session   Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  senderId  String
+  sender    User        @relation(fields: [senderId], references: [id])
+  content   String
+  type      MessageType @default(TEXT)
+  createdAt DateTime    @default(now())
+
+  @@index([sessionId])
+  @@index([senderId])
+  @@map("chat_messages")
+}
+
+model Recording {
+  id          String          @id @default(uuid())
+  sessionId   String
+  session     Session         @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  startedById String
+  startedBy   User            @relation("RecordingStarter", fields: [startedById], references: [id])
+  status      RecordingStatus @default(IDLE)
+  filePath    String?
+  downloadUrl String?
+  size        Int?            @default(0)
+  duration    Int?            @default(0)
+  startedAt   DateTime?
+  stoppedAt   DateTime?
+  createdAt   DateTime        @default(now())
+
+  @@index([sessionId])
+  @@index([status])
+  @@map("recordings")
+}
+
+model FileAttachment {
+  id           String   @id @default(uuid())
+  sessionId    String
+  session      Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  uploadedById String
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id])
+  originalName String
+  mimeType     String
+  size         Int
+  storagePath  String
+  downloadUrl  String?
+  createdAt    DateTime @default(now())
+
+  @@index([sessionId])
+  @@map("file_attachments")
+}
+
+model SessionEvent {
+  id        String           @id @default(uuid())
+  sessionId String
+  session   Session          @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?            @relation(fields: [userId], references: [id])
+  type      SessionEventType
+  metadata  Json?            @default("{}")
+  createdAt DateTime         @default(now())
+
+  @@index([sessionId])
+  @@index([type])
+  @@map("session_events")
+}
