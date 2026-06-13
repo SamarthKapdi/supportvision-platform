@@ -1,0 +1,149 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: sv-postgres
+    environment:
+      POSTGRES_USER: supportvision
+      POSTGRES_PASSWORD: sv_secret_2026
+      POSTGRES_DB: supportvision
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U supportvision']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sv-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: sv-redis
+    command: redis-server --requirepass sv_redis_2026
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', '-a', 'sv_redis_2026', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sv-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: sv-minio
+    command: server /data --console-address ':9001'
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sv-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sv-backend
+    ports:
+      - '4000:4000'
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://supportvision:sv_secret_2026@postgres:5432/supportvision
+      REDIS_URL: redis://:sv_redis_2026@redis:6379
+      JWT_SECRET: sv_jwt_hackathon_secret_2026_atomquest
+      JWT_EXPIRES_IN: 24h
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      MINIO_BUCKET: supportvision
+      MINIO_USE_SSL: 'false'
+      MEDIASOUP_LISTEN_IP: 0.0.0.0
+      MEDIASOUP_ANNOUNCED_IP: 127.0.0.1
+      MEDIASOUP_MIN_PORT: 40000
+      MEDIASOUP_MAX_PORT: 49999
+      CORS_ORIGIN: http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - sv-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sv-frontend
+    ports:
+      - '3000:80'
+    depends_on:
+      - backend
+    networks:
+      - sv-network
+
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: sv-prometheus
+    ports:
+      - '9090:9090'
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    networks:
+      - sv-network
+
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: sv-grafana
+    ports:
+      - '3001:3000'
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/supportvision.json
+    volumes:
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - sv-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  sv-network:
+    driver: bridge
